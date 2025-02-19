@@ -59,7 +59,6 @@ impl FromStr for CFG {
         let mut current_lhs = String::new();
         for line in s.lines().filter(|l| !l.is_empty()) {
             let (lhs, rhs) = line
-                .trim()
                 .split_once(" -> ")
                 .map(|(a, b)| (a.to_owned(), b.to_owned()))
                 .ok_or(anyhow!("No arrow on line!"))
@@ -104,8 +103,11 @@ impl CFG {
             .map(|(k, v)| (k, v.iter().map(|pr| pr.0.iter().collect()).collect()))
             .collect()
     }
-    pub fn start_symbol(&self, _: char) -> Option<Symbol> {
-        unimplemented!()
+    pub fn start_symbol(&self) -> Option<&Symbol> {
+        self.0
+            .iter()
+            .find(|(_, v)| v.iter().any(|i| i.0.contains(&Symbol::Eof)))
+            .map(|(k, _)| k)
     }
     pub fn first_set(&self, _: char) -> Option<Vec<Symbol>> {
         unimplemented!()

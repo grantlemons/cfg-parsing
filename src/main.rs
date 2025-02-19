@@ -55,6 +55,11 @@ fn main() -> Result<()> {
         }
     }
 
+    println!(
+        "\nStart Symbol: {}",
+        cfg.start_symbol().ok_or(anyhow!("No start symbol!"))?
+    );
+
     Ok(())
 }
 
