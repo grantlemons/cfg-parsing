@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fmt::Display,
     str::FromStr,
 };
 
@@ -28,14 +29,15 @@ impl FromStr for Symbol {
     }
 }
 
-impl ToString for Symbol {
-    fn to_string(&self) -> String {
-        match self {
+impl Display for Symbol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
             Symbol::Terminal(t) => t.clone(),
             Symbol::NonTerminal(t) => t.clone(),
             Symbol::Lambda => "lambda".to_string(),
             Symbol::Eof => "$".to_string(),
-        }
+        };
+        write!(f, "{}", s)
     }
 }
 
@@ -95,6 +97,15 @@ impl CFG {
             .into_iter()
             .chain(self.non_terminals())
             .collect()
+    }
+    pub fn rules(&self) -> Vec<(&Symbol, Vec<Vec<&Symbol>>)> {
+        self.0
+            .iter()
+            .map(|(k, v)| (k, v.iter().map(|pr| pr.0.iter().collect()).collect()))
+            .collect()
+    }
+    pub fn start_symbol(&self, _: char) -> Option<Symbol> {
+        unimplemented!()
     }
     pub fn first_set(&self, _: char) -> Option<Vec<Symbol>> {
         unimplemented!()
