@@ -3,4 +3,14 @@ name = "cfg-parsing"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "cfg_parsing"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cfg_parsing"
+path = "src/main.rs"
+
 [dependencies]
+anyhow = "1.0.95"
+clap = { version = "4.5.26", features = ["derive"] }
