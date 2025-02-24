@@ -7,7 +7,10 @@ use std::{
     str::FromStr,
 };
 
+/// LHS Non-Terminals associated with RHS [`ProductionRule`]s.
 pub struct CFG(BTreeMap<Symbol, Vec<ProductionRule>>);
+
+/// A RHS production rule of a [`CFG`].
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ProductionRule {
     symbols: Vec<Symbol>,
@@ -87,6 +90,7 @@ impl FromStr for CFG {
 }
 
 impl CFG {
+    /// Returns a list of all [`Symbol::Terminal`] symbols in the CFG.
     pub fn terminals(&self) -> Vec<&Symbol> {
         let set: BTreeSet<&Symbol> = self
             .0
@@ -97,27 +101,40 @@ impl CFG {
             .collect();
         set.into_iter().collect()
     }
+
+    /// Returns a list of all [`Symbol::NonTerminal`] symbols in the CFG.
     pub fn non_terminals(&self) -> Vec<&Symbol> {
         self.0.keys().collect()
     }
+
+    /// Returns a list of all [`Symbol::Terminal`] and [`Symbol::NonTerminal`] symbols in the CFG.
     pub fn symbols(&self) -> Vec<&Symbol> {
         self.terminals()
             .into_iter()
             .chain(self.non_terminals())
             .collect()
     }
+
+    /// Returns the CFG represented in a format easily manipulated by the caller.
     pub fn rules(&self) -> Vec<(&Symbol, Vec<Vec<&Symbol>>)> {
         self.0
             .iter()
             .map(|(k, v)| (k, v.iter().map(|pr| pr.symbols.iter().collect()).collect()))
             .collect()
     }
+
+    /// Returns the start symbol of the CFG.
+    /// This is the first [`Symbol::NonTerminal`] with a rule containing [`Symbol::Eof`].
     pub fn start_symbol(&self) -> Option<&Symbol> {
         self.0
             .iter()
             .find(|(_, v)| v.iter().any(|i| i.symbols.contains(&Symbol::Eof)))
             .map(|(k, _)| k)
     }
+
+    /// Returns the first set of a given production rule.
+    ///
+    /// Result is `None` if the production rule begins with lambda.
     fn pr_first_set<'a>(&'a self, pr: &'a ProductionRule) -> Option<BTreeSet<&'a Symbol>> {
         pr.symbols
             .iter()
@@ -129,6 +146,10 @@ impl CFG {
             })
             .find(|set| !set.is_empty())
     }
+
+    /// Returns the first set of a given [`Symbol::NonTerminal`] symbol.
+    ///
+    /// Result is `None` if the given symbol is not a [`Symbol::NonTerminal`] occurring on the LHS of the CFG.
     pub fn first_set(&self, symbol: &Symbol) -> Option<BTreeSet<&Symbol>> {
         Some(
             self.0
@@ -139,11 +160,20 @@ impl CFG {
                 .collect::<BTreeSet<&Symbol>>(),
         )
     }
+
+    /// Returns the follow set of a given [`Symbol::NonTerminal`] symbol.
+    ///
+    /// Result is `None` if the given symbol is not a [`Symbol::NonTerminal`] occurring on the LHS of the CFG.
+    ///
+    /// ## Implementation
+    ///
+    /// - Finds the first set of the following symbol for each instance of the symbol in a
+    /// production rule.
+    /// - If symbol is at the end of said production rule, include the follow set of the
+    /// key as well.
+    /// - If the symbol at the end of the production rule is the provided [`Symbol::NonTerminal`],
+    /// do not recurse.
     pub fn follow_set(&self, symbol: &Symbol) -> Option<BTreeSet<&Symbol>> {
-        // Find the first set of the following symbol for each instance of the symbol in a
-        // production rule
-        // If symbol is at the end of said production rule, include the follow set of the
-        // key as well
         Some(
             self.0
                 .iter()
@@ -188,6 +218,11 @@ impl CFG {
                 .collect(),
         )
     }
+
+    /// Returns `Some(true)` if a given [`Symbol::NonTerminal`] symbol contains a production rule
+    /// that can derive to only [`Symbol::Lambda`]\(s\).
+    ///
+    /// Result is `None` if the given symbol is not a [`Symbol::NonTerminal`] occurring on the LHS of the CFG.
     pub fn lambda_derivable(&self, symbol: &Symbol) -> Option<bool> {
         Some(self.0.get(symbol)?.iter().any(|pr| {
             pr.symbols.iter().all(|s| {
