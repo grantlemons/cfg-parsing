@@ -35,11 +35,11 @@ fn main() -> Result<()> {
         .ok_or(anyhow!("Unable to reduce symbols"))?;
 
     println!("Grammar Non-Terminals");
-    println!("{}", non_terminal_list);
+    println!("{{{}}}", non_terminal_list);
     println!("Grammar Terminals");
-    println!("{}", terminal_list);
+    println!("{{{}}}", terminal_list);
     println!("Grammar Symbols");
-    println!("{}", symbol_list);
+    println!("{{{}}}", symbol_list);
 
     println!("\nGrammar Rules");
     let mut rule_count = 1;
@@ -59,6 +59,31 @@ fn main() -> Result<()> {
         "\nStart Symbol: {}",
         cfg.start_symbol().ok_or(anyhow!("No start symbol!"))?
     );
+
+    for lhs in cfg.non_terminals() {
+        println!(
+            "\"{}\" First Set: {{{}}}",
+            lhs,
+            cfg.first_set(lhs)
+                .context("Unable to get first set.")?
+                .iter()
+                .fold(String::new(), |acc, s| acc + ", " + &s.to_string())
+        );
+        println!(
+            "\"{}\" Follow Set: {{{}}}",
+            lhs,
+            cfg.follow_set(lhs)
+                .context("Unable to get follow set.")?
+                .iter()
+                .fold(String::new(), |acc, s| acc + ", " + &s.to_string())
+        );
+        println!(
+            "\"{}\" Derives to Lambda: {}",
+            lhs,
+            cfg.lambda_derivable(lhs)
+                .context("Unable to run derives to lambda.")?
+        );
+    }
 
     Ok(())
 }
