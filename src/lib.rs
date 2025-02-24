@@ -82,7 +82,7 @@ impl FromStr for CFG {
                 .filter(|str| !str.is_empty())
                 .map(ProductionRule::from_str)
                 .collect();
-            for rule in rules? {
+            for rule in rules?.into_iter().filter(|pr| !pr.symbols.is_empty()) {
                 res.entry(Symbol::NonTerminal(lhs.trim().to_owned()))
                     .or_default()
                     .push(rule);
