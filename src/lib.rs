@@ -1,14 +1,19 @@
 use anyhow::{anyhow, Result};
+use itertools::Itertools;
 use std::{
     collections::{BTreeMap, BTreeSet},
+    convert::identity,
     fmt::Display,
     str::FromStr,
 };
 
 pub struct CFG(BTreeMap<Symbol, Vec<ProductionRule>>);
-pub struct ProductionRule(Vec<Symbol>);
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ProductionRule {
+    symbols: Vec<Symbol>,
+}
 
-#[derive(Debug, PartialEq, PartialOrd, Ord, Eq)]
+#[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Hash)]
 pub enum Symbol {
     Terminal(String),
     NonTerminal(String),
@@ -47,7 +52,7 @@ impl FromStr for ProductionRule {
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         let symbols: Result<_> = s.split_whitespace().map(Symbol::from_str).collect();
 
-        Ok(Self(symbols?))
+        Ok(Self { symbols: symbols? })
     }
 }
 
@@ -65,7 +70,11 @@ impl FromStr for CFG {
                 .unwrap_or((current_lhs.clone(), line.to_owned()));
             current_lhs = lhs.clone();
 
-            let rules: Result<Vec<_>> = rhs.split("| ").map(ProductionRule::from_str).collect();
+            let rules: Result<Vec<_>> = rhs
+                .split("| ")
+                .filter(|str| !str.is_empty())
+                .map(ProductionRule::from_str)
+                .collect();
             for rule in rules? {
                 res.entry(Symbol::NonTerminal(lhs.trim().to_owned()))
                     .or_default()
@@ -83,7 +92,7 @@ impl CFG {
             .0
             .values()
             .flatten()
-            .flat_map(|pr| &pr.0)
+            .flat_map(|pr| &pr.symbols)
             .filter(|s| matches!(*s, Symbol::Terminal(_)))
             .collect();
         set.into_iter().collect()
@@ -100,28 +109,100 @@ impl CFG {
     pub fn rules(&self) -> Vec<(&Symbol, Vec<Vec<&Symbol>>)> {
         self.0
             .iter()
-            .map(|(k, v)| (k, v.iter().map(|pr| pr.0.iter().collect()).collect()))
+            .map(|(k, v)| (k, v.iter().map(|pr| pr.symbols.iter().collect()).collect()))
             .collect()
     }
     pub fn start_symbol(&self) -> Option<&Symbol> {
         self.0
             .iter()
-            .find(|(_, v)| v.iter().any(|i| i.0.contains(&Symbol::Eof)))
+            .find(|(_, v)| v.iter().any(|i| i.symbols.contains(&Symbol::Eof)))
             .map(|(k, _)| k)
     }
-    pub fn first_set(&self, _: char) -> Option<Vec<Symbol>> {
-        unimplemented!()
+    fn pr_first_set<'a>(&'a self, pr: &'a ProductionRule) -> Option<BTreeSet<&'a Symbol>> {
+        pr.symbols
+            .iter()
+            .filter_map(|s| match s {
+                Symbol::Terminal(_) => Some(BTreeSet::from([s])),
+                Symbol::NonTerminal(_) => self.first_set(s),
+                Symbol::Lambda => None,
+                Symbol::Eof => Some(BTreeSet::from([s])),
+            })
+            .find(|set| !set.is_empty())
     }
-    pub fn follow_set(&self, _: char) -> Option<Vec<Symbol>> {
-        unimplemented!()
+    pub fn first_set(&self, symbol: &Symbol) -> Option<BTreeSet<&Symbol>> {
+        Some(
+            self.0
+                .get(symbol)?
+                .iter()
+                .filter_map(|pr| self.pr_first_set(pr))
+                .flatten()
+                .collect::<BTreeSet<&Symbol>>(),
+        )
     }
-    pub fn lambda_derivable(&self, _: char) -> Option<bool> {
-        unimplemented!()
+    pub fn follow_set(&self, symbol: &Symbol) -> Option<BTreeSet<&Symbol>> {
+        // Find the first set of the following symbol for each instance of the symbol in a
+        // production rule
+        // If symbol is at the end of said production rule, include the follow set of the
+        // key as well
+        Some(
+            self.0
+                .iter()
+                .flat_map(|(k, v)| {
+                    let mut follow_self = false;
+                    let res: BTreeSet<&Symbol> = v
+                        .iter()
+                        .filter(|pr| pr.symbols.contains(symbol))
+                        .flat_map(|pr| {
+                            let follow_symbols = pr
+                                .symbols
+                                .iter()
+                                .filter(|s| {
+                                    matches!(
+                                        s,
+                                        Symbol::Terminal(_) | Symbol::NonTerminal(_) | Symbol::Eof
+                                    )
+                                })
+                                .positions(|s| s == symbol)
+                                .map(|pos| pr.symbols.get(pos + 1))
+                                .collect::<BTreeSet<_>>();
+                            if follow_symbols.contains(&None) {
+                                follow_self = true;
+                            }
+                            follow_symbols
+                        })
+                        .flatten()
+                        .filter_map(|s| match s {
+                            Symbol::Terminal(_) => Some(BTreeSet::from([s])),
+                            Symbol::NonTerminal(_) => self.first_set(s),
+                            Symbol::Lambda => panic!("Lambda should not occur here!"),
+                            Symbol::Eof => Some(BTreeSet::from([s])),
+                        })
+                        .flatten()
+                        .collect();
+                    if follow_self && k != symbol {
+                        res.union(&self.follow_set(k).unwrap()).cloned().collect()
+                    } else {
+                        res
+                    }
+                })
+                .collect(),
+        )
+    }
+    pub fn lambda_derivable(&self, symbol: &Symbol) -> Option<bool> {
+        Some(self.0.get(symbol)?.iter().any(|pr| {
+            pr.symbols.iter().all(|s| {
+                !matches!(s, Symbol::Terminal(_))
+                    && (self.lambda_derivable(s).is_some_and(identity)
+                        || matches!(s, Symbol::Lambda))
+            })
+        }))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use crate::{Symbol, CFG};
 
     #[test]
@@ -235,5 +316,117 @@ Var -> e | f | g
             .into_iter()
             .zip(expected)
             .for_each(|(a, b)| assert_eq!(*a, b));
+    }
+
+    #[test]
+    fn test_to_lambda() {
+        let input = "startGoal -> A $
+A -> T A
+| lambda
+T -> Var equal E
+E -> a plus b
+| s times t
+E -> zero | Var
+Var -> e | f | g
+| h | j | k
+";
+
+        let cfg: CFG = input.parse().unwrap();
+
+        assert!(cfg
+            .lambda_derivable(&Symbol::NonTerminal("A".to_string()))
+            .unwrap());
+        assert!(!cfg
+            .lambda_derivable(&Symbol::NonTerminal("T".to_string()))
+            .unwrap());
+        assert!(!cfg
+            .lambda_derivable(&Symbol::NonTerminal("Var".to_string()))
+            .unwrap());
+        assert!(!cfg
+            .lambda_derivable(&Symbol::NonTerminal("E".to_string()))
+            .unwrap());
+    }
+
+    #[test]
+    fn test_first_set() {
+        let input = "startGoal -> A $
+A -> T A
+| lambda
+T -> Var equal E
+E -> a plus b
+| s times t
+E -> zero | Var
+Var -> e | f | g
+| h | j | k
+";
+
+        let cfg: CFG = input.parse().unwrap();
+
+        assert_eq!(
+            cfg.first_set(&Symbol::NonTerminal("A".to_string()))
+                .unwrap(),
+            BTreeSet::from([
+                &Symbol::Terminal("e".to_string()),
+                &Symbol::Terminal("f".to_string()),
+                &Symbol::Terminal("g".to_string()),
+                &Symbol::Terminal("h".to_string()),
+                &Symbol::Terminal("j".to_string()),
+                &Symbol::Terminal("k".to_string()),
+            ])
+        );
+        assert_eq!(
+            cfg.first_set(&Symbol::NonTerminal("E".to_string()))
+                .unwrap(),
+            BTreeSet::from([
+                &Symbol::Terminal("a".to_string()),
+                &Symbol::Terminal("s".to_string()),
+                &Symbol::Terminal("zero".to_string()),
+            ])
+            .union(
+                &cfg.first_set(&Symbol::NonTerminal("A".to_string()))
+                    .unwrap()
+            )
+            .cloned()
+            .collect()
+        );
+    }
+
+    #[test]
+    fn test_follow_set() {
+        let input = "startGoal -> A $
+A -> T A
+| lambda
+T -> Var equal E
+E -> a plus b
+| s times t
+E -> zero | Var
+Var -> e | f | g
+| h | j | k
+";
+
+        let cfg: CFG = input.parse().unwrap();
+
+        assert_eq!(
+            cfg.follow_set(&Symbol::NonTerminal("A".to_string()))
+                .unwrap(),
+            BTreeSet::from([&Symbol::Eof])
+        );
+        assert_eq!(
+            cfg.follow_set(&Symbol::NonTerminal("Var".to_string()))
+                .unwrap(),
+            BTreeSet::from([&Symbol::Terminal("equal".to_string())])
+                .union(
+                    &cfg.follow_set(&Symbol::NonTerminal("E".to_string()))
+                        .unwrap()
+                )
+                .cloned()
+                .collect()
+        );
+        assert_eq!(
+            cfg.follow_set(&Symbol::NonTerminal("E".to_string()))
+                .unwrap(),
+            cfg.follow_set(&Symbol::NonTerminal("T".to_string()))
+                .unwrap()
+        );
     }
 }
