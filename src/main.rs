@@ -67,7 +67,9 @@ fn main() -> Result<()> {
             cfg.first_set(lhs)
                 .context("Unable to get first set.")?
                 .iter()
-                .fold(String::new(), |acc, s| acc + ", " + &s.to_string())
+                .map(|s| s.to_string())
+                .reduce(|acc, s| acc + ", " + &s)
+                .unwrap_or_default()
         );
         println!(
             "\"{}\" Follow Set: {{{}}}",
@@ -75,7 +77,9 @@ fn main() -> Result<()> {
             cfg.follow_set(lhs)
                 .context("Unable to get follow set.")?
                 .iter()
-                .fold(String::new(), |acc, s| acc + ", " + &s.to_string())
+                .map(|s| s.to_string())
+                .reduce(|acc, s| acc + ", " + &s)
+                .unwrap_or_default()
         );
         println!(
             "\"{}\" Derives to Lambda: {}",
