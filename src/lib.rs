@@ -65,7 +65,11 @@ impl FromStr for CFG {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut res: BTreeMap<Symbol, Vec<ProductionRule>> = BTreeMap::new();
         let mut current_lhs = String::new();
-        for line in s.lines().filter(|l| !l.is_empty()) {
+        for line in s
+            .lines()
+            .filter(|l| !l.is_empty())
+            .filter(|l| l.chars().next().is_some_and(|c| c != '#'))
+        {
             let (lhs, rhs) = line
                 .split_once(" -> ")
                 .map(|(a, b)| (a.to_owned(), b.to_owned()))
@@ -135,14 +139,18 @@ impl CFG {
     /// Returns the first set of a given production rule.
     ///
     /// Result is `None` if the production rule begins with lambda.
-    fn pr_first_set<'a>(&'a self, pr: &'a ProductionRule) -> Option<BTreeSet<&'a Symbol>> {
+    fn pr_first_set<'a>(
+        &'a self,
+        pr: &'a ProductionRule,
+        symbol: &Symbol,
+    ) -> Option<BTreeSet<&'a Symbol>> {
         pr.symbols
             .iter()
             .filter_map(|s| match s {
                 Symbol::Terminal(_) => Some(BTreeSet::from([s])),
-                Symbol::NonTerminal(_) => self.first_set(s),
-                Symbol::Lambda => None,
+                Symbol::NonTerminal(_) if s != symbol => self.first_set(s),
                 Symbol::Eof => Some(BTreeSet::from([s])),
+                _ => None,
             })
             .find(|set| !set.is_empty())
     }
@@ -155,7 +163,7 @@ impl CFG {
             self.0
                 .get(symbol)?
                 .iter()
-                .filter_map(|pr| self.pr_first_set(pr))
+                .filter_map(|pr| self.pr_first_set(pr, symbol))
                 .flatten()
                 .collect::<BTreeSet<&Symbol>>(),
         )
@@ -227,7 +235,7 @@ impl CFG {
         Some(self.0.get(symbol)?.iter().any(|pr| {
             pr.symbols.iter().all(|s| {
                 !matches!(s, Symbol::Terminal(_))
-                    && (self.lambda_derivable(s).is_some_and(identity)
+                    && (s != symbol && self.lambda_derivable(s).is_some_and(identity)
                         || matches!(s, Symbol::Lambda))
             })
         }))
