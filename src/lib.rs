@@ -150,17 +150,11 @@ impl CFG {
     /// Returns the first set of a given [`Symbol::NonTerminal`] symbol.
     ///
     /// Result is `None` if the given symbol is not a [`Symbol::NonTerminal`] occurring on the LHS of the CFG.
-    ///
-    /// ## Implementation
-    ///
-    /// - If the symbol at the beginning of a production rule is the provided [`Symbol::NonTerminal`]
-    /// (left recursive), do not recurse.
     pub fn first_set(&self, symbol: &Symbol) -> Option<BTreeSet<&Symbol>> {
         Some(
             self.0
                 .get(symbol)?
                 .iter()
-                .filter(|pr| pr.symbols.first().is_some_and(|s| s != symbol))
                 .filter_map(|pr| self.pr_first_set(pr))
                 .flatten()
                 .collect::<BTreeSet<&Symbol>>(),
