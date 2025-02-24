@@ -124,6 +124,7 @@ impl CFG {
         self.0
             .iter()
             .map(|(k, v)| (k, v.iter().map(|pr| pr.symbols.iter().collect()).collect()))
+            .sorted_by_key(|v| !self.start_symbol().is_some_and(|s| v.0 == s))
             .collect()
     }
 
