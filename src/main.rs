@@ -55,10 +55,7 @@ fn main() -> Result<()> {
         }
     }
 
-    println!(
-        "\nStart Symbol: {}",
-        cfg.start_symbol().ok_or(anyhow!("No start symbol!"))?
-    );
+    println!("\nStart Symbol: {}", cfg.start_symbol()?);
 
     for lhs in cfg.non_terminals() {
         println!(

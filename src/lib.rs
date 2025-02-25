@@ -124,17 +124,18 @@ impl CFG {
         self.0
             .iter()
             .map(|(k, v)| (k, v.iter().map(|pr| pr.symbols.iter().collect()).collect()))
-            .sorted_by_key(|v| !self.start_symbol().is_some_and(|s| v.0 == s))
+            .sorted_by_key(|v| !self.start_symbol().is_ok_and(|s| v.0 == s))
             .collect()
     }
 
     /// Returns the start symbol of the CFG.
     /// This is the first [`Symbol::NonTerminal`] with a rule containing [`Symbol::Eof`].
-    pub fn start_symbol(&self) -> Option<&Symbol> {
+    pub fn start_symbol(&self) -> Result<&Symbol> {
         self.0
             .iter()
             .find(|(_, v)| v.iter().any(|i| i.symbols.contains(&Symbol::Eof)))
             .map(|(k, _)| k)
+            .ok_or(anyhow!("No eof marker found!"))
     }
 
     /// Returns the first set of a given production rule.
@@ -149,7 +150,7 @@ impl CFG {
             .iter()
             .filter_map(|s| match s {
                 Symbol::Terminal(_) => Some(BTreeSet::from([s])),
-                Symbol::NonTerminal(_) if s != symbol => self.first_set(s),
+                Symbol::NonTerminal(_) if s != symbol => self.first_set(s).ok(),
                 Symbol::Eof => Some(BTreeSet::from([s])),
                 _ => None,
             })
@@ -159,15 +160,15 @@ impl CFG {
     /// Returns the first set of a given [`Symbol::NonTerminal`] symbol.
     ///
     /// Result is `None` if the given symbol is not a [`Symbol::NonTerminal`] occurring on the LHS of the CFG.
-    pub fn first_set(&self, symbol: &Symbol) -> Option<BTreeSet<&Symbol>> {
-        Some(
-            self.0
-                .get(symbol)?
-                .iter()
-                .filter_map(|pr| self.pr_first_set(pr, symbol))
-                .flatten()
-                .collect::<BTreeSet<&Symbol>>(),
-        )
+    pub fn first_set(&self, symbol: &Symbol) -> Result<BTreeSet<&Symbol>> {
+        Ok(self
+            .0
+            .get(symbol)
+            .ok_or_else(|| anyhow!("Symbol \"{}\" not a Non-Terminal of the Grammar.", symbol))?
+            .iter()
+            .filter_map(|pr| self.pr_first_set(pr, symbol))
+            .flatten()
+            .collect::<BTreeSet<&Symbol>>())
     }
 
     /// Returns the follow set of a given [`Symbol::NonTerminal`] symbol.
@@ -177,11 +178,11 @@ impl CFG {
     /// ## Implementation
     ///
     /// - Finds the first set of the following symbol for each instance of the symbol in a
-    /// production rule.
+    ///   production rule.
     /// - If symbol is at the end of said production rule, include the follow set of the
-    /// key as well.
+    ///   key as well.
     /// - If the symbol at the end of the production rule is the provided [`Symbol::NonTerminal`]
-    /// (right recursive), do not recurse.
+    ///   (right recursive), do not recurse.
     pub fn follow_set(&self, symbol: &Symbol) -> Option<BTreeSet<&Symbol>> {
         Some(
             self.0
@@ -212,7 +213,7 @@ impl CFG {
                         .flatten()
                         .filter_map(|s| match s {
                             Symbol::Terminal(_) => Some(BTreeSet::from([s])),
-                            Symbol::NonTerminal(_) => self.first_set(s),
+                            Symbol::NonTerminal(_) => self.first_set(s).ok(),
                             Symbol::Lambda => panic!("Lambda should not occur here!"),
                             Symbol::Eof => Some(BTreeSet::from([s])),
                         })
@@ -232,14 +233,19 @@ impl CFG {
     /// that can derive to only [`Symbol::Lambda`]\(s\).
     ///
     /// Result is `None` if the given symbol is not a [`Symbol::NonTerminal`] occurring on the LHS of the CFG.
-    pub fn lambda_derivable(&self, symbol: &Symbol) -> Option<bool> {
-        Some(self.0.get(symbol)?.iter().any(|pr| {
-            pr.symbols.iter().all(|s| {
-                !matches!(s, Symbol::Terminal(_))
-                    && (s != symbol && self.lambda_derivable(s).is_some_and(identity)
-                        || matches!(s, Symbol::Lambda))
-            })
-        }))
+    pub fn lambda_derivable(&self, symbol: &Symbol) -> Result<bool> {
+        Ok(self
+            .0
+            .get(symbol)
+            .ok_or_else(|| anyhow!("Symbol \"{}\" not a Non-Terminal of the Grammar.", symbol))?
+            .iter()
+            .any(|pr| {
+                pr.symbols.iter().all(|s| {
+                    !matches!(s, Symbol::Terminal(_))
+                        && (s != symbol && self.lambda_derivable(s).is_ok_and(identity)
+                            || matches!(s, Symbol::Lambda))
+                })
+            }))
     }
 }
 
