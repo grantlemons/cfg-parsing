@@ -128,6 +128,11 @@ impl CFG {
             .collect()
     }
 
+    /// Returns the production rules of the grammar as represented.
+    pub fn production_rules(&self) -> Vec<(&Symbol, &ProductionRule)> {
+        self.0.iter().flatten()
+    }
+
     /// Returns the start symbol of the CFG.
     /// This is the first [`Symbol::NonTerminal`] with a rule containing [`Symbol::Eof`].
     pub fn start_symbol(&self) -> Result<&Symbol> {
@@ -229,6 +234,14 @@ impl CFG {
         )
     }
 
+    fn pr_lambda_derivable(&self, pr: &ProductionRule, symbol: &Symbol) -> bool {
+        pr.symbols.iter().all(|s| {
+            !matches!(s, Symbol::Terminal(_))
+                && (s != symbol && self.lambda_derivable(s).is_ok_and(identity)
+                    || matches!(s, Symbol::Lambda))
+        })
+    }
+
     /// Returns `Some(true)` if a given [`Symbol::NonTerminal`] symbol contains a production rule
     /// that can derive to only [`Symbol::Lambda`]\(s\).
     ///
@@ -239,13 +252,24 @@ impl CFG {
             .get(symbol)
             .ok_or_else(|| anyhow!("Symbol \"{}\" not a Non-Terminal of the Grammar.", symbol))?
             .iter()
-            .any(|pr| {
-                pr.symbols.iter().all(|s| {
-                    !matches!(s, Symbol::Terminal(_))
-                        && (s != symbol && self.lambda_derivable(s).is_ok_and(identity)
-                            || matches!(s, Symbol::Lambda))
-                })
-            }))
+            .any(|pr| self.pr_lambda_derivable(pr, symbol)))
+    }
+
+    pub fn predict_set<'a>(
+        &'a self,
+        symbol: &Symbol,
+        pr: &'a ProductionRule,
+    ) -> Option<BTreeSet<&'a Symbol>> {
+        pr.symbols
+            .iter()
+            .filter_map(|s| match s {
+                Symbol::Terminal(_) => Some(BTreeSet::from([s])),
+                Symbol::NonTerminal(_) if s != symbol => self.first_set(s).ok(),
+                Symbol::Eof => Some(BTreeSet::from([s])),
+                Symbol::Lambda => self.follow_set(symbol),
+                _ => None,
+            })
+            .find(|set| !set.is_empty())
     }
 }
 
