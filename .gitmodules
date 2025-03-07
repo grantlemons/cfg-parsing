@@ -1,0 +1,9 @@
+[submodule "regardless"]
+	path = regardless
+	url = https://github.com/grantlemons/regardless.git
+[submodule "dfs"]
+	path = dfs
+	url = https://github.com/grantlemons/dfs.git
+[submodule "iteraide"]
+	path = iteraide
+	url = https://github.com/grantlemons/iteraide.git

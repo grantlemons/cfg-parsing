@@ -1,5 +1,5 @@
-use anyhow::{anyhow, Result};
-use itertools::Itertools;
+use iteraide::{CollectVec, IntersperseIterator, PositionsIterator, SortedUnstableIterator};
+use regardless::{regardless, Error, Result};
 use std::{
     collections::{BTreeMap, BTreeSet},
     convert::identity,
@@ -16,7 +16,7 @@ pub struct ProductionRule {
     symbols: Vec<Symbol>,
 }
 
-#[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Hash)]
+#[derive(Debug, PartialEq, PartialOrd, Eq, Hash)]
 pub enum Symbol {
     Terminal(String),
     NonTerminal(String),
@@ -24,8 +24,31 @@ pub enum Symbol {
     Eof,
 }
 
+impl Ord for Symbol {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (Symbol::Terminal(inner), Symbol::Terminal(other)) => inner.cmp(other),
+            (Symbol::Terminal(_), Symbol::NonTerminal(_)) => std::cmp::Ordering::Greater,
+            (Symbol::Terminal(_), Symbol::Lambda) => std::cmp::Ordering::Greater,
+            (Symbol::Terminal(_), Symbol::Eof) => std::cmp::Ordering::Greater,
+            (Symbol::NonTerminal(_), Symbol::Terminal(_)) => std::cmp::Ordering::Less,
+            (Symbol::NonTerminal(inner), Symbol::NonTerminal(other)) => inner.cmp(other),
+            (Symbol::NonTerminal(_), Symbol::Lambda) => std::cmp::Ordering::Greater,
+            (Symbol::NonTerminal(_), Symbol::Eof) => std::cmp::Ordering::Greater,
+            (Symbol::Lambda, Symbol::Terminal(_)) => std::cmp::Ordering::Less,
+            (Symbol::Lambda, Symbol::NonTerminal(_)) => std::cmp::Ordering::Less,
+            (Symbol::Lambda, Symbol::Lambda) => std::cmp::Ordering::Equal,
+            (Symbol::Lambda, Symbol::Eof) => std::cmp::Ordering::Greater,
+            (Symbol::Eof, Symbol::Terminal(_)) => std::cmp::Ordering::Less,
+            (Symbol::Eof, Symbol::NonTerminal(_)) => std::cmp::Ordering::Less,
+            (Symbol::Eof, Symbol::Lambda) => std::cmp::Ordering::Less,
+            (Symbol::Eof, Symbol::Eof) => std::cmp::Ordering::Equal,
+        }
+    }
+}
+
 impl FromStr for Symbol {
-    type Err = anyhow::Error;
+    type Err = Error;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         Ok(match s.trim() {
@@ -50,7 +73,7 @@ impl Display for Symbol {
 }
 
 impl FromStr for ProductionRule {
-    type Err = anyhow::Error;
+    type Err = Error;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         let symbols: Result<_> = s.split_whitespace().map(Symbol::from_str).collect();
@@ -59,8 +82,22 @@ impl FromStr for ProductionRule {
     }
 }
 
+impl Display for ProductionRule {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            self.symbols
+                .iter()
+                .map(Symbol::to_string)
+                .intersperse(" ".to_string())
+                .collect::<String>()
+        )
+    }
+}
+
 impl FromStr for CFG {
-    type Err = anyhow::Error;
+    type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut res: BTreeMap<Symbol, Vec<ProductionRule>> = BTreeMap::new();
@@ -73,7 +110,7 @@ impl FromStr for CFG {
             let (lhs, rhs) = line
                 .split_once(" -> ")
                 .map(|(a, b)| (a.to_owned(), b.to_owned()))
-                .ok_or(anyhow!("No arrow on line!"))
+                .ok_or(regardless!("No arrow on line!"))
                 .unwrap_or((current_lhs.clone(), line.to_owned()));
             current_lhs = lhs.clone();
 
@@ -93,8 +130,18 @@ impl FromStr for CFG {
     }
 }
 
+impl ProductionRule {
+    pub fn symbols(&self) -> &Vec<Symbol> {
+        &self.symbols
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.symbols.is_empty()
+    }
+}
+
 impl CFG {
-    /// Returns a list of all [`Symbol::Terminal`] symbols in the CFG.
+    /// Returns a sorted list of all [`Symbol::Terminal`] symbols in the CFG.
     pub fn terminals(&self) -> Vec<&Symbol> {
         let set: BTreeSet<&Symbol> = self
             .0
@@ -103,12 +150,12 @@ impl CFG {
             .flat_map(|pr| &pr.symbols)
             .filter(|s| matches!(*s, Symbol::Terminal(_)))
             .collect();
-        set.into_iter().collect()
+        set.into_iter().sorted_unstable().collect()
     }
 
-    /// Returns a list of all [`Symbol::NonTerminal`] symbols in the CFG.
+    /// Returns a sorted list of all [`Symbol::NonTerminal`] symbols in the CFG.
     pub fn non_terminals(&self) -> Vec<&Symbol> {
-        self.0.keys().collect()
+        self.0.keys().sorted_unstable().collect()
     }
 
     /// Returns a list of all [`Symbol::Terminal`] and [`Symbol::NonTerminal`] symbols in the CFG.
@@ -120,17 +167,22 @@ impl CFG {
     }
 
     /// Returns the CFG represented in a format easily manipulated by the caller.
-    pub fn rules(&self) -> Vec<(&Symbol, Vec<Vec<&Symbol>>)> {
-        self.0
-            .iter()
-            .map(|(k, v)| (k, v.iter().map(|pr| pr.symbols.iter().collect()).collect()))
-            .sorted_by_key(|v| !self.start_symbol().is_ok_and(|s| v.0 == s))
-            .collect()
+    pub fn rules(&self) -> Vec<(&Symbol, &Vec<ProductionRule>)> {
+        let mut res: Vec<_> = self.0.iter().collect();
+        res.sort_by_key(|v| !self.start_symbol().is_ok_and(|s| v.0 == s));
+        res
     }
 
     /// Returns the production rules of the grammar as represented.
     pub fn production_rules(&self) -> Vec<(&Symbol, &ProductionRule)> {
-        self.0.iter().flatten()
+        let mut res: Vec<_> = Vec::new();
+
+        for (k, v) in self.0.iter() {
+            for pr in v {
+                res.push((k, pr));
+            }
+        }
+        res
     }
 
     /// Returns the start symbol of the CFG.
@@ -140,7 +192,7 @@ impl CFG {
             .iter()
             .find(|(_, v)| v.iter().any(|i| i.symbols.contains(&Symbol::Eof)))
             .map(|(k, _)| k)
-            .ok_or(anyhow!("No eof marker found!"))
+            .ok_or(regardless!("No eof marker found!"))
     }
 
     /// Returns the first set of a given production rule.
@@ -169,7 +221,7 @@ impl CFG {
         Ok(self
             .0
             .get(symbol)
-            .ok_or_else(|| anyhow!("Symbol \"{}\" not a Non-Terminal of the Grammar.", symbol))?
+            .ok_or_else(|| regardless!("Symbol \"{}\" not a Non-Terminal of the Grammar.", symbol))?
             .iter()
             .filter_map(|pr| self.pr_first_set(pr, symbol))
             .flatten()
@@ -218,7 +270,7 @@ impl CFG {
                         .flatten()
                         .filter_map(|s| match s {
                             Symbol::Terminal(_) => Some(BTreeSet::from([s])),
-                            Symbol::NonTerminal(_) => self.first_set(s).ok(),
+                            Symbol::NonTerminal(_) => self.first_set(&s).ok(),
                             Symbol::Lambda => panic!("Lambda should not occur here!"),
                             Symbol::Eof => Some(BTreeSet::from([s])),
                         })
@@ -250,7 +302,7 @@ impl CFG {
         Ok(self
             .0
             .get(symbol)
-            .ok_or_else(|| anyhow!("Symbol \"{}\" not a Non-Terminal of the Grammar.", symbol))?
+            .ok_or_else(|| regardless!("Symbol \"{}\" not a Non-Terminal of the Grammar.", symbol))?
             .iter()
             .any(|pr| self.pr_lambda_derivable(pr, symbol)))
     }
@@ -270,6 +322,51 @@ impl CFG {
                 _ => None,
             })
             .find(|set| !set.is_empty())
+    }
+
+    pub fn disjoint_predicts(&self, symbol: &Symbol) -> Option<bool> {
+        let predicts = self
+            .0
+            .get(symbol)?
+            .iter()
+            .filter_map(|pr| self.predict_set(symbol, pr))
+            .collect_vec();
+
+        let mut not_disjoint = false;
+        for (i, set) in predicts.iter().enumerate() {
+            for other in predicts
+                .iter()
+                .enumerate()
+                .filter(|(j, _)| *j != i)
+                .map(|(_, other)| other)
+            {
+                not_disjoint |= !set.is_disjoint(other);
+            }
+        }
+
+        Some(!not_disjoint)
+    }
+
+    pub fn parse_table(&self) -> Result<BTreeMap<&Symbol, BTreeMap<&Symbol, &ProductionRule>>> {
+        let mut table: BTreeMap<&Symbol, BTreeMap<&Symbol, &ProductionRule>> = BTreeMap::new();
+        for lhs in self.non_terminals() {
+            if self.disjoint_predicts(lhs).is_none_or(|inner| !inner) {
+                return Err(regardless!("Not all predict sets are disjoint!"));
+            }
+
+            for pr in self.0.get(lhs).ok_or(regardless!(
+                "Unable to get production rules for lhs symbol!"
+            ))? {
+                let set = self
+                    .predict_set(lhs, pr)
+                    .ok_or(regardless!("Unable to get predict set!"))?;
+                for terminal in set {
+                    table.entry(lhs).or_default().insert(terminal, pr);
+                }
+            }
+        }
+
+        Ok(table)
     }
 }
 
