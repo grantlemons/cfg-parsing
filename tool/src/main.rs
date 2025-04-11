@@ -2,6 +2,7 @@ use std::{collections::BTreeMap, io::Read, path::Path};
 
 use cfg_parsing::*;
 use clap::Parser;
+use iteraide::SortedByKeyIterator;
 use regardless::{regardless, Context, Error, Result};
 
 mod cli_args;
@@ -41,23 +42,6 @@ fn main() -> Result<()> {
     println!("Grammar Symbols");
     println!("{{{}}}", symbol_list);
 
-    println!("\nGrammar Rules");
-    let mut rule_count = 1;
-    let mut rule_map: BTreeMap<(&Symbol, &ProductionRule), usize> = BTreeMap::new();
-    for (lhs, rhs) in cfg.rules().into_iter().filter(|(_, r)| !r.is_empty()) {
-        for rule in rhs.into_iter().filter(|r| !r.is_empty()) {
-            let production = rule
-                .symbols()
-                .into_iter()
-                .map(Symbol::to_string)
-                .reduce(|acc, s| acc + " " + &s)
-                .ok_or(regardless!("Unable to reduce symbols"))?;
-            println!("({})   {} -> {}", rule_count, lhs, production);
-            rule_map.insert((lhs, rule), rule_count);
-            rule_count += 1;
-        }
-    }
-
     println!("\nStart Symbol: {}", cfg.start_symbol()?);
 
     for lhs in cfg.non_terminals() {
@@ -90,45 +74,7 @@ fn main() -> Result<()> {
     }
 
     println!();
-    for (symbol, rule) in cfg.production_rules() {
-        println!(
-            "\"{} -> {}\" Predict Set: {{{}}}",
-            symbol,
-            rule,
-            cfg.predict_set(symbol, rule)
-                .ok_or(regardless!("Unable to get predict set."))?
-                .iter()
-                .map(|s| s.to_string())
-                .reduce(|acc, s| acc + ", " + &s)
-                .unwrap_or_default()
-        )
-    }
-
-    println!();
-    for lhs in cfg.non_terminals() {
-        println!(
-            "\"{}\" Sets are disjoint?: {}",
-            lhs,
-            cfg.disjoint_predicts(lhs)
-                .ok_or(regardless!("Could not check disjoint!"))?
-        )
-    }
-
-    println!();
-    let table = cfg.parse_table()?;
-    for (lhs, row) in table.iter() {
-        let width = table.keys().map(|k| k.to_string().len()).max().unwrap();
-        print!("{:width$}", lhs);
-        for terminal in cfg.terminals() {
-            print!(
-                "  {}",
-                row.get(terminal)
-                    .map(|pr| format!("{:02}", rule_map.get(&(lhs, pr)).unwrap()))
-                    .unwrap_or(" --".to_owned())
-            )
-        }
-        println!();
-    }
+    println!("{}", cfg.parse_table()?);
 
     Ok(())
 }

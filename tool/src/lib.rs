@@ -16,7 +16,7 @@ pub struct ProductionRule {
     symbols: Vec<Symbol>,
 }
 
-#[derive(Debug, PartialEq, PartialOrd, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub enum Symbol {
     Terminal(String),
     NonTerminal(String),
@@ -47,6 +47,12 @@ impl Ord for Symbol {
     }
 }
 
+impl PartialOrd for Symbol {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl FromStr for Symbol {
     type Err = Error;
 
@@ -68,7 +74,7 @@ impl Display for Symbol {
             Symbol::Lambda => "lambda".to_string(),
             Symbol::Eof => "$".to_string(),
         };
-        write!(f, "{}", s)
+        s.fmt(f)
     }
 }
 
@@ -270,7 +276,7 @@ impl CFG {
                         .flatten()
                         .filter_map(|s| match s {
                             Symbol::Terminal(_) => Some(BTreeSet::from([s])),
-                            Symbol::NonTerminal(_) => self.first_set(&s).ok(),
+                            Symbol::NonTerminal(_) => self.first_set(s).ok(),
                             Symbol::Lambda => panic!("Lambda should not occur here!"),
                             Symbol::Eof => Some(BTreeSet::from([s])),
                         })
@@ -312,22 +318,16 @@ impl CFG {
         symbol: &Symbol,
         pr: &'a ProductionRule,
     ) -> Option<BTreeSet<&'a Symbol>> {
-        pr.symbols
-            .iter()
-            .filter_map(|s| match s {
-                Symbol::Terminal(_) => Some(BTreeSet::from([s])),
-                Symbol::NonTerminal(_) if s != symbol => self.first_set(s).ok(),
-                Symbol::Eof => Some(BTreeSet::from([s])),
-                Symbol::Lambda => self.follow_set(symbol),
-                _ => None,
-            })
-            .find(|set| !set.is_empty())
+        self.pr_first_set(pr, symbol).or(self.follow_set(symbol))
     }
 
-    pub fn disjoint_predicts(&self, symbol: &Symbol) -> Option<bool> {
+    pub fn disjoint_predicts(&self, symbol: &Symbol) -> Result<bool> {
         let predicts = self
             .0
-            .get(symbol)?
+            .get(symbol)
+            .ok_or(regardless!(
+                "Unable to get production rules for lhs symbol!"
+            ))?
             .iter()
             .filter_map(|pr| self.predict_set(symbol, pr))
             .collect_vec();
@@ -344,13 +344,13 @@ impl CFG {
             }
         }
 
-        Some(!not_disjoint)
+        Ok(!not_disjoint)
     }
 
-    pub fn parse_table(&self) -> Result<BTreeMap<&Symbol, BTreeMap<&Symbol, &ProductionRule>>> {
+    pub fn parse_table(&self) -> Result<ParseTable> {
         let mut table: BTreeMap<&Symbol, BTreeMap<&Symbol, &ProductionRule>> = BTreeMap::new();
         for lhs in self.non_terminals() {
-            if self.disjoint_predicts(lhs).is_none_or(|inner| !inner) {
+            if !self.disjoint_predicts(lhs)? {
                 return Err(regardless!("Not all predict sets are disjoint!"));
             }
 
@@ -366,7 +366,68 @@ impl CFG {
             }
         }
 
-        Ok(table)
+        Ok(ParseTable {
+            inner: table,
+            cfg: self,
+        })
+    }
+}
+
+pub struct ParseTable<'a> {
+    pub cfg: &'a CFG,
+    pub inner: BTreeMap<&'a Symbol, BTreeMap<&'a Symbol, &'a ProductionRule>>,
+}
+impl Display for ParseTable<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Grammar Rules")?;
+        let mut rule_count = 1;
+        let mut rule_map: BTreeMap<(&Symbol, &ProductionRule), usize> = BTreeMap::new();
+        for (lhs, rhs) in self.cfg.rules().into_iter().filter(|(_, r)| !r.is_empty()) {
+            for rule in rhs.iter().filter(|r| !r.is_empty()) {
+                let production = rule
+                    .symbols()
+                    .iter()
+                    .map(Symbol::to_string)
+                    .reduce(|acc, s| acc + " " + &s)
+                    .unwrap();
+                writeln!(f, "({})   {} -> {}", rule_count, lhs, production)?;
+                rule_map.insert((lhs, rule), rule_count);
+                rule_count += 1;
+            }
+        }
+        writeln!(f)?;
+
+        let width = self
+            .inner
+            .keys()
+            .map(|k| k.to_string().len())
+            .max()
+            .unwrap();
+        write!(
+            f,
+            "{:>width$}{}",
+            "",
+            self.cfg
+                .terminals()
+                .iter()
+                .map(|t| format!("  {:02}", t))
+                .reduce(|acc, s| acc + &s)
+                .unwrap_or_default()
+        )?;
+        for (lhs, row) in self.inner.iter() {
+            write!(f, "\n{:width$}", lhs)?;
+            for terminal in self.cfg.terminals() {
+                let terminal_width = terminal.to_string().len().max(2);
+                write!(
+                    f,
+                    "  {:0>terminal_width$}",
+                    row.get(terminal)
+                        .map(|pr| rule_map.get(&(lhs, pr)).unwrap().to_string())
+                        .unwrap_or(format!("{:-<terminal_width$}", ""))
+                )?
+            }
+        }
+        Ok(())
     }
 }
 
